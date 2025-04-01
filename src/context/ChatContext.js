@@ -12,36 +12,49 @@ export const ChatProvider = ({ children }) => {
   const [selectedUser, setSelectedUser] = useState(null);
   const [loading, setLoading] = useState(false);
   const [activeUsers, setActiveUsers] = useState([]);
+  const [error, setError] = useState(null);
+  const [isConnected, setIsConnected] = useState(false);
 
   useEffect(() => {
     if (user) {
-      console.log('Creating socket connection with user:', user);
-      
-      const apiUrl = process.env.REACT_APP_API_URL || 'http://localhost:8080';
-      console.log('Using API URL:', apiUrl);
-      
+      const apiUrl = process.env.REACT_APP_API_URL;
+      if (!apiUrl) {
+        setError('API URL is not configured. Please check your environment variables.');
+        return;
+      }
+
       const newSocket = io(apiUrl, {
         auth: {
           token: localStorage.getItem('token')
-        }
+        },
+        reconnection: true,
+        reconnectionAttempts: 5,
+        reconnectionDelay: 1000,
+        reconnectionDelayMax: 5000,
+        timeout: 20000
       });
 
       newSocket.on('connect', () => {
         console.log('Socket connected successfully');
+        setIsConnected(true);
+        setError(null);
         newSocket.emit('join', user.id);
-        
-        // Register as an active user
         newSocket.emit('userActive', { 
           userId: user.id, 
           username: user.username
         });
-        
-        // Request active users list
         newSocket.emit('getActiveUsers');
+      });
+
+      newSocket.on('disconnect', () => {
+        console.log('Socket disconnected');
+        setIsConnected(false);
       });
 
       newSocket.on('connect_error', (error) => {
         console.error('Socket connection error:', error);
+        setError('Failed to connect to chat server. Please check your connection.');
+        setIsConnected(false);
       });
 
       newSocket.on('receiveMessage', (message) => {
@@ -51,10 +64,8 @@ export const ChatProvider = ({ children }) => {
 
       newSocket.on('activeUsers', (users) => {
         console.log('Received active users:', users);
-        // Filter out current user
         const filteredUsers = users.filter(u => u.userId !== user.id);
         setActiveUsers(filteredUsers);
-        console.log('Filtered active users:', filteredUsers);
       });
 
       setSocket(newSocket);
@@ -70,8 +81,9 @@ export const ChatProvider = ({ children }) => {
   const fetchMessages = async (userId) => {
     try {
       setLoading(true);
+      setError(null);
       const response = await axios.get(
-        `${process.env.REACT_APP_API_URL || 'http://localhost:8080'}/api/messages/${userId}`,
+        `${process.env.REACT_APP_API_URL}/api/messages/${userId}`,
         {
           headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
         }
@@ -80,6 +92,7 @@ export const ChatProvider = ({ children }) => {
       setSelectedUser(userId);
     } catch (error) {
       console.error('Error fetching messages:', error);
+      setError(error.response?.data?.message || 'Failed to fetch messages. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -89,8 +102,9 @@ export const ChatProvider = ({ children }) => {
     if (!selectedUser || !content.trim()) return;
 
     try {
+      setError(null);
       const response = await axios.post(
-        `${process.env.REACT_APP_API_URL || 'http://localhost:8080'}/api/messages`,
+        `${process.env.REACT_APP_API_URL}/api/messages`,
         {
           receiverId: selectedUser,
           content
@@ -108,13 +122,15 @@ export const ChatProvider = ({ children }) => {
       });
     } catch (error) {
       console.error('Error sending message:', error);
+      setError(error.response?.data?.message || 'Failed to send message. Please try again.');
     }
   };
 
   const updateMessageStatus = async (messageId, status) => {
     try {
+      setError(null);
       await axios.patch(
-        `${process.env.REACT_APP_API_URL || 'http://localhost:8080'}/api/messages/${messageId}/status`,
+        `${process.env.REACT_APP_API_URL}/api/messages/${messageId}/status`,
         { status },
         {
           headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
@@ -128,6 +144,7 @@ export const ChatProvider = ({ children }) => {
       );
     } catch (error) {
       console.error('Error updating message status:', error);
+      setError(error.response?.data?.message || 'Failed to update message status.');
     }
   };
 
@@ -142,7 +159,9 @@ export const ChatProvider = ({ children }) => {
         updateMessageStatus,
         setSelectedUser,
         socket,
-        activeUsers
+        activeUsers,
+        error,
+        isConnected
       }}
     >
       {children}
